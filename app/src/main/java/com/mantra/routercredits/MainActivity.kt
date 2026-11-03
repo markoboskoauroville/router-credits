@@ -40,6 +40,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)  // the first line names the app
         store = Store(this)
         val dp = { v: Int -> TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt() }
 
@@ -56,7 +57,8 @@ class MainActivity : Activity() {
             col.addView(this, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         }
 
-        text(14f).text = "Router Credits · TP-Link 192.168.1.1 · Telemach"
+        text(20f, bold = true).text = "Router Credits"
+        text(13f).text = "TP-Link 192.168.1.1 · Telemach SIM · STANJE to 13880"
         big = text(44f, bold = true).apply { gravity = Gravity.CENTER_HORIZONTAL }
         small = text(14f).apply { gravity = Gravity.CENTER_HORIZONTAL }
 
@@ -103,6 +105,13 @@ class MainActivity : Activity() {
         text(16f, bold = true).text = "Log"
         events = text(11f, mono = true).apply { setTextColor(Color.GRAY) }
 
+        // Android 15 draws the app under the status and navigation bars: keep the content clear of them.
+        val pad = col.paddingTop
+        col.setOnApplyWindowInsetsListener { v, insets ->
+            val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+            v.setPadding(v.paddingLeft, pad + bars.top, v.paddingRight, pad + bars.bottom)
+            insets
+        }
         setContentView(ScrollView(this).apply { addView(col) })
         col.requestFocus()
         refresh()
