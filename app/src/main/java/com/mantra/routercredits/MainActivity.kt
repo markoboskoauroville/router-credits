@@ -43,7 +43,12 @@ class MainActivity : Activity() {
         store = Store(this)
         val dp = { v: Int -> TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt() }
 
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(24), dp(16), dp(24)) }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(24), dp(16), dp(24))
+            // the focus stays here, so the page opens at the top and not scrolled to the password field
+            isFocusableInTouchMode = true
+            descendantFocusability = android.view.ViewGroup.FOCUS_BEFORE_DESCENDANTS
+        }
         fun text(size: Float, bold: Boolean = false, mono: Boolean = false) = TextView(this).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
             if (bold) setTypeface(typeface, Typeface.BOLD)
@@ -99,6 +104,7 @@ class MainActivity : Activity() {
         events = text(11f, mono = true).apply { setTextColor(Color.GRAY) }
 
         setContentView(ScrollView(this).apply { addView(col) })
+        col.requestFocus()
         refresh()
     }
 
