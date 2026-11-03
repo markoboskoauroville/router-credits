@@ -32,6 +32,7 @@ class Driver(
 
     @SuppressLint("SetJavaScriptEnabled")
     fun setup() {
+        WebView.setWebContentsDebuggingEnabled(true)  // inspectable over adb (chrome://inspect)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.useWideViewPort = true
@@ -216,7 +217,9 @@ class Driver(
         val looked = mutableSetOf<List<String>>()
         while (System.currentTimeMillis() - sent < REPLY_WAIT_MS) {
             Thread.sleep(REPLY_POLL_MS)
-            for (r in rows(true)) {
+            val now = rows(true)
+            store.log("inbox: ${now.size} rows, top: " + now.take(3).joinToString(" | ") { "${it[1]} ${it[3]} ${it[2].take(30)}" })
+            for (r in now) {
                 val key = r.drop(1)
                 if (key in before || key in looked) continue
                 looked += key
