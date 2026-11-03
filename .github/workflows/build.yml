@@ -1,0 +1,56 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Read the version
+        id: v
+        run: echo "version=$(grep '^mantraVersion=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Restore the keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/rc.p12"
+
+      - name: Test the reply parser
+        run: gradle :app:testReleaseUnitTest --no-daemon
+
+      - name: Assemble
+        env:
+          MANTRA_KEYSTORE: ${{ runner.temp }}/rc.p12
+          MANTRA_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          MANTRA_KEY_ALIAS: routercredits
+        run: gradle :app:assembleRelease --no-daemon
+
+      - name: Shred the keystore
+        if: always()
+        run: shred -u "$RUNNER_TEMP/rc.p12" 2>/dev/null || true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=${{ steps.v.outputs.version }}
+          FILE=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs "$FILE" | grep -i "SHA-256 digest"
+          gh release create "v$V" "$FILE" --title "v$V" --notes "Router Credits v$V" || \
+          gh release upload "v$V" "$FILE" --clobber
