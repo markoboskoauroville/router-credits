@@ -1,0 +1,9 @@
+.secret/
+*.jks
+*.keystore
+*.p12
+local.properties
+.gradle/
+build/
+.idea/
+*.iml
