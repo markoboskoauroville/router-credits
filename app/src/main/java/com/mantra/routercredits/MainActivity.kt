@@ -1,10 +1,10 @@
 package com.mantra.routercredits
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
-import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -13,8 +13,7 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
 import android.webkit.WebView
 import android.widget.Button
-import android.widget.CheckBox
-import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -29,11 +28,7 @@ class MainActivity : Activity() {
     private lateinit var history: TextView
     private lateinit var events: TextView
     private lateinit var check: Button
-    private lateinit var watch: CheckBox
-    private lateinit var pass: EditText
     private lateinit var inbox: Button
-    private lateinit var smsMe: CheckBox
-    private lateinit var myNumber: EditText
     @Volatile private var running = false
 
     private val prefs by lazy { getSharedPreferences("router", MODE_PRIVATE) }
@@ -57,7 +52,18 @@ class MainActivity : Activity() {
             col.addView(this, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         }
 
-        text(20f, bold = true).text = "Router Credits"
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(TextView(this).apply {
+            text = "Router Credits"; setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f); setTypeface(typeface, Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        header.addView(ImageButton(this).apply {
+            setImageResource(R.drawable.ic_settings)
+            contentDescription = "Settings"
+            background = null
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        col.addView(header)
         text(13f).text = "TP-Link 192.168.1.1 · Telemach SIM · STANJE to 13880"
         big = text(44f, bold = true).apply { gravity = Gravity.CENTER_HORIZONTAL }
         small = text(14f).apply { gravity = Gravity.CENTER_HORIZONTAL }
@@ -65,39 +71,12 @@ class MainActivity : Activity() {
         check = Button(this).apply { text = "Check now"; setOnClickListener { runCheck() } }
         col.addView(check, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(16) })
 
-        watch = CheckBox(this).apply {
-            text = "Show the browser while it works"
-            isChecked = prefs.getBoolean("watch", true)
-            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean("watch", on).apply(); sizeWeb() }
-        }
-        col.addView(watch)
-
-        pass = EditText(this).apply {
-            hint = "Router password"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setText(prefs.getString("password", DEFAULT_PASSWORD))
-        }
-        col.addView(pass)
-
-        smsMe = CheckBox(this).apply {
-            text = "Send the result by SMS to my phone"
-            isChecked = prefs.getBoolean("smsMe", true)
-            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean("smsMe", on).apply() }
-        }
-        col.addView(smsMe)
-        myNumber = EditText(this).apply {
-            hint = "My phone number"
-            inputType = InputType.TYPE_CLASS_PHONE
-            setText(prefs.getString("myNumber", MY_NUMBER))
-        }
-        col.addView(myNumber)
-
         inbox = Button(this).apply { text = "Read the router's inbox into the log"; setOnClickListener { runInbox() } }
         col.addView(inbox)
 
         web = WebView(this)
         col.addView(web, LinearLayout.LayoutParams(MATCH_PARENT, dp(1)))
-        driver = Driver(web, store, { prefs.getString("password", DEFAULT_PASSWORD) ?: "" }, { watch.isChecked })
+        driver = Driver(web, store, { Settings.password(prefs) }, { Settings.watch(prefs) })
         driver.setup()
 
         text(16f, bold = true).text = "Checks"
@@ -118,7 +97,7 @@ class MainActivity : Activity() {
     }
 
     private fun sizeWeb() {
-        val show = running && watch.isChecked
+        val show = running && Settings.watch(prefs)
         web.layoutParams = web.layoutParams.apply {
             height = if (show) (resources.displayMetrics.heightPixels * 0.55).toInt() else 1
         }
@@ -140,8 +119,9 @@ class MainActivity : Activity() {
 
     /** The result to Marko's phone, from the router's own SIM. A failure here never spoils the check. */
     private fun tell(b: Balance) {
-        val to = prefs.getString("myNumber", MY_NUMBER)?.trim().orEmpty()
-        if (!prefs.getBoolean("smsMe", true) || to.isEmpty()) return
+        val to = Settings.myNumber(prefs)
+        if (!Settings.smsMe(prefs)) return
+        if (to.isEmpty()) { store.log("no phone number in Settings: the result is not sent by SMS"); return }
         val eur = b.eur?.let { " · %.2f EUR".format(it) } ?: ""
         try {
             driver.sms(to, "Router: %.1f GB left (%.0f of %.0f MB used, Telemach %s)%s".format(
@@ -160,8 +140,10 @@ class MainActivity : Activity() {
     /** One router job at a time (the router allows one session), on a worker thread. */
     private fun job(label: String, work: () -> Unit) {
         if (running) return
-        prefs.edit().putString("password", pass.text.toString())
-            .putString("myNumber", myNumber.text.toString().trim()).apply()
+        if (Settings.password(prefs).isEmpty()) {  // nothing to log in with yet: Settings first
+            startActivity(Intent(this, SettingsActivity::class.java))
+            return
+        }
         running = true
         check.isEnabled = false
         inbox.isEnabled = false
@@ -201,13 +183,13 @@ class MainActivity : Activity() {
         events.text = store.tail(80).reversed().joinToString("\n")
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (!running) refresh()
+    }
+
     override fun onDestroy() {
         web.destroy()
         super.onDestroy()
-    }
-
-    companion object {
-        const val DEFAULT_PASSWORD = "12345678"
-        const val MY_NUMBER = "+385976790768"  // Marko's phone (MANTRA_MANIFEST modules/whatsapp-notify.md)
     }
 }
