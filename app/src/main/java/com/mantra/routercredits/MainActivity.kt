@@ -31,6 +31,9 @@ class MainActivity : Activity() {
     private lateinit var check: Button
     private lateinit var watch: CheckBox
     private lateinit var pass: EditText
+    private lateinit var inbox: Button
+    private lateinit var smsMe: CheckBox
+    private lateinit var myNumber: EditText
     @Volatile private var running = false
 
     private val prefs by lazy { getSharedPreferences("router", MODE_PRIVATE) }
@@ -69,6 +72,22 @@ class MainActivity : Activity() {
         }
         col.addView(pass)
 
+        smsMe = CheckBox(this).apply {
+            text = "Send the result by SMS to my phone"
+            isChecked = prefs.getBoolean("smsMe", true)
+            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean("smsMe", on).apply() }
+        }
+        col.addView(smsMe)
+        myNumber = EditText(this).apply {
+            hint = "My phone number"
+            inputType = InputType.TYPE_CLASS_PHONE
+            setText(prefs.getString("myNumber", MY_NUMBER))
+        }
+        col.addView(myNumber)
+
+        inbox = Button(this).apply { text = "Read the router's inbox into the log"; setOnClickListener { runInbox() } }
+        col.addView(inbox)
+
         web = WebView(this)
         col.addView(web, LinearLayout.LayoutParams(MATCH_PARENT, dp(1)))
         driver = Driver(web, store, { prefs.getString("password", DEFAULT_PASSWORD) ?: "" }, { watch.isChecked })
@@ -90,30 +109,56 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun runCheck() {
+    private fun runCheck() = job("Checking…") {
+        val t0 = System.currentTimeMillis()
+        val rec = try {
+            val b = driver.balance()
+            val secs = (System.currentTimeMillis() - t0) / 100 / 10.0
+            store.log("BALANCE %.2f MB left of %.2f at %s (%.1f s)".format(b.leftMb, b.totalMb, b.at, secs))
+            b.json().put("checked", Store.now()).put("seconds", secs).also { tell(b) }
+        } catch (e: Exception) {
+            store.log("FAILED ${why(e)}")
+            JSONObject().put("checked", Store.now()).put("error", why(e))
+        }
+        store.check(rec)
+    }
+
+    /** The result to Marko's phone, from the router's own SIM. A failure here never spoils the check. */
+    private fun tell(b: Balance) {
+        val to = prefs.getString("myNumber", MY_NUMBER)?.trim().orEmpty()
+        if (!prefs.getBoolean("smsMe", true) || to.isEmpty()) return
+        val eur = b.eur?.let { " · %.2f EUR".format(it) } ?: ""
+        try {
+            driver.sms(to, "Router: %.1f GB left (%.0f of %.0f MB used, Telemach %s)%s".format(
+                b.leftGb, b.usedMb, b.totalMb, b.at.substringAfter(' '), eur))
+        } catch (e: Exception) {
+            store.log("the SMS to $to FAILED: ${why(e)}")
+        }
+    }
+
+    private fun runInbox() = job("Reading…") {
+        try { driver.dumpInbox() } catch (e: Exception) { store.log("FAILED ${why(e)}") }
+    }
+
+    private fun why(e: Exception) = if (e is Fail) e.message else "${e.javaClass.simpleName}: ${e.message}"
+
+    /** One router job at a time (the router allows one session), on a worker thread. */
+    private fun job(label: String, work: () -> Unit) {
         if (running) return
-        prefs.edit().putString("password", pass.text.toString()).apply()
+        prefs.edit().putString("password", pass.text.toString())
+            .putString("myNumber", myNumber.text.toString().trim()).apply()
         running = true
         check.isEnabled = false
-        check.text = "Checking…"
+        inbox.isEnabled = false
+        check.text = label
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         sizeWeb()
         Thread {
-            val t0 = System.currentTimeMillis()
-            val rec = try {
-                val b = driver.balance()
-                val secs = (System.currentTimeMillis() - t0) / 100 / 10.0
-                store.log("BALANCE %.2f MB left of %.2f at %s (%.1f s)".format(b.leftMb, b.totalMb, b.at, secs))
-                b.json().put("checked", Store.now()).put("seconds", secs)
-            } catch (e: Exception) {
-                val msg = if (e is Fail) e.message else "${e.javaClass.simpleName}: ${e.message}"
-                store.log("FAILED $msg")
-                JSONObject().put("checked", Store.now()).put("error", msg)
-            }
-            store.check(rec)
+            work()
             runOnUiThread {
                 running = false
                 check.isEnabled = true
+                inbox.isEnabled = true
                 check.text = "Check now"
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 sizeWeb()
@@ -138,7 +183,7 @@ class MainActivity : Activity() {
             if (c.has("error")) "${c.getString("checked")}  FAILED ${c.getString("error")}"
             else "${c.getString("checked")}  %6.1f GB left  (%.0f s)".format(c.getDouble("left_gb"), c.optDouble("seconds"))
         }.ifEmpty { "none yet" }
-        events.text = store.tail(40).reversed().joinToString("\n")
+        events.text = store.tail(80).reversed().joinToString("\n")
     }
 
     override fun onDestroy() {
@@ -148,5 +193,6 @@ class MainActivity : Activity() {
 
     companion object {
         const val DEFAULT_PASSWORD = "12345678"
+        const val MY_NUMBER = "+385976790768"  // Marko's phone (MANTRA_MANIFEST modules/whatsapp-notify.md)
     }
 }

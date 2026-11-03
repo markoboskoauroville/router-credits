@@ -211,30 +211,53 @@ class Driver(
         store.log("check started")
         open()
         ready()
-        val before = rows(false).map { it.drop(1) }.toSet()
         send(BALANCE_TO, BALANCE_TEXT)
         val sent = System.currentTimeMillis()
+        // The router's list is no proof of what is new: on 3.11.2026 rows "received" seconds after the STANJE carried
+        // replies from 17.10 and 18.10. Only the date written in the reply is: a row is read when its preview names
+        // today, and a reply counts when its own time is no earlier than the STANJE (2 min slack).
+        val today = SimpleDateFormat("d.M.yyyy", Locale.ROOT).format(sent)
         val looked = mutableSetOf<List<String>>()
         while (System.currentTimeMillis() - sent < REPLY_WAIT_MS) {
             Thread.sleep(REPLY_POLL_MS)
             val now = rows(true)
             store.log("inbox: ${now.size} rows, top: " + now.take(3).joinToString(" | ") { "${it[1]} ${it[3]} ${it[2].take(30)}" })
             for (r in now) {
-                val key = r.drop(1)
-                if (key in before || key in looked) continue
-                looked += key
                 val (idx, from, prev) = r
                 if (!from.lowercase().contains("telemach") && !prev.lowercase().startsWith("postovani")) continue
+                val d = DATE.find(prev)?.destructured?.let { (dd, mm, yy) -> "${dd.toInt()}.${mm.toInt()}.$yy" }
+                if (d != null && d != today) continue
+                if (!looked.add(r.drop(1))) continue
                 val text = read(idx)
                 val b = Reply.parse(text)
-                if (b == null) { store.log("a new Telemach message that is not a balance: ${text.take(120)}"); continue }
-                // Only a reply written after STANJE was sent counts (an old one once came back when the list shifted).
+                if (b == null) { store.log("a Telemach message that is not a balance: ${text.take(120)}"); continue }
                 val at = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).parse(b.at)?.time ?: 0
                 if (at < sent - 120_000) { store.log("an old Telemach reply skipped (from ${b.at})"); continue }
                 return b
             }
         }
         throw Fail("no reply from Telemach within ${REPLY_WAIT_MS / 1000} s")
+    }
+
+    /** Send one SMS from the router's SIM (the result to Marko's phone). */
+    fun sms(to: String, text: String) {
+        open(); ready()
+        send(to, text)
+    }
+
+    /** Every message in the router's inbox, full text, into the log. */
+    fun dumpInbox() {
+        store.log("reading the inbox")
+        open(); ready()
+        val all = rows(false)
+        store.log("inbox: ${all.size} rows")
+        for (r in all) {
+            if (!truthy(poll { js("""const s = document.getElementById("msg_" + arguments[0]); if (!vis(s)) return false; s.click(); return true;""", r[0]) })) continue
+            val text = poll { js("""const p = document.getElementById("msgContent"); return vis(p) ? p.textContent.trim() : "";""") } as? String ?: ""
+            store.log("  #${r[0]} ${r[1]} | ${r[3]} | $text")
+            js("""const b = document.getElementById("back"); if (vis(b)) { b.click(); return true; } return false;""")
+            poll { js("""return vis(document.getElementById("msg_" + arguments[0]));""", r[0]) }
+        }
     }
 
     companion object {
@@ -244,6 +267,7 @@ class Driver(
         const val REPLY_WAIT_MS = 60_000L
         const val REPLY_POLL_MS = 3_000L
         const val SHOW_MS = 5_000L
+        private val DATE = Regex("""do (\d{1,2})\.(\d{1,2})\.(\d{4})""")
         const val ERR_JS = """return [...document.querySelectorAll("[class*=error], [class*=tips]")].filter(vis)
             .map(e => e.innerText.trim()).filter(t => t).join(" / ");"""
     }

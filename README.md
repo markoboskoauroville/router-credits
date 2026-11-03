@@ -12,6 +12,8 @@ than the STANJE counts.
 
 - The last status stays on the screen; every check is a line under **Checks**, every step a line under **Log**.
 - The log files: `Android/data/com.mantra.routercredits/files/router-credits.log` and `checks.jsonl`.
+- **Send the result by SMS to my phone** (on by default, +385 97 679 0768): after a good check the router's own SIM texts "Router: N GB left …".
+- **Read the router's inbox into the log**: every SMS on the router, full text.
 - **Show the browser while it works**: the router's page is shown and typed into at a hand's pace.
 - The router allows one logged-in device: a check here logs the Mac's router tab off, and the other way round.
 
